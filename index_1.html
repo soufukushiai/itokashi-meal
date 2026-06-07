@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>食事計算表｜糸をかし</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Hiragino Kaku Gothic ProN','Meiryo',sans-serif; }
+    input[type=number] { -moz-appearance: textfield; }
+    input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useEffect } = React;
+
+var BUDGET = 800;
+var toNum = function(v) { return Number(v) || 0; };
+
+var INIT_USERS = [
+  "天野朋子","上西育","太田由美子","梶原公明","片山淑子","小谷明子",
+  "白濱広美","杉江克美","俵　寛","寺澤祐樹","仲川宗和","西口広子",
+  "西野竹美","平尾大樹","福山聖華","松嶋博美","村瀬賢斗","柳井健伸",
+  "柳迫佑美","山脇布紗子","余家淑子","吉岡幸子","綿巻　誠","宮地弘子",
+  "伊藤由美子","伊集院兼平"
+].map(function(name, i) { return { id: i + 1, name: name, type: "user" }; });
+
+var INIT_STAFF = ["金","福本","木山","東","山道"]
+  .map(function(name, i) { return { id: 1000 + i, name: name, type: "staff" }; });
+
+function toReiwa(s) {
+  try {
+    var d = new Date(s + "T00:00:00");
+    if (isNaN(d)) return s;
+    var dow = "日月火水木金土"[d.getDay()];
+    return "令和" + (d.getFullYear() - 2018) + "年" + (d.getMonth() + 1) + "月" + d.getDate() + "日（" + dow + "）";
+  } catch(e) { return s; }
+}
+
+function App() {
+  var [tab, setTab] = useState("today");
+  var [users, setUsers] = useState(INIT_USERS);
+  var [staff, setStaff] = useState(INIT_STAFF);
+  var [step, setStep] = useState(1);
+  var [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  var [budget, setBudget] = useState(15000);
+  var [snackMode, setSnackMode] = useState("equal");
+  var [attend, setAttend] = useState({});
+  var [entries, setEntries] = useState({});
+  var [totalSnackInput, setTotalSnackInput] = useState("");
+  var [totalMealInput, setTotalMealInput] = useState("");
+  var [newUserName, setNewUserName] = useState("");
+  var [newStaffName, setNewStaffName] = useState("");
+  var [quickStaffName, setQuickStaffName] = useState("");
+
+  useEffect(function() {
+    try {
+      var u = localStorage.getItem("ik_users");
+      if (u) setUsers(JSON.parse(u));
+      var sf = localStorage.getItem("ik_staff");
+      if (sf) setStaff(JSON.parse(sf));
+      var ss = localStorage.getItem("ik_sess");
+      if (ss) {
+        var s = JSON.parse(ss);
+        if (s.date) setDate(s.date);
+        if (s.budget) setBudget(s.budget);
+        if (s.snackMode) setSnackMode(s.snackMode);
+        if (s.attend) setAttend(s.attend);
+        if (s.entries) setEntries(s.entries);
+        if (s.totalSnackInput) setTotalSnackInput(s.totalSnackInput);
+        if (s.totalMealInput) setTotalMealInput(s.totalMealInput);
+        if (s.step) setStep(s.step);
+      }
+    } catch(e) {}
+  }, []);
+  useEffect(function() { try { localStorage.setItem("ik_users", JSON.stringify(users)); } catch(e) {} }, [users]);
+  useEffect(function() { try { localStorage.setItem("ik_staff", JSON.stringify(staff)); } catch(e) {} }, [staff]);
+  useEffect(function() {
+    try { localStorage.setItem("ik_sess", JSON.stringify({date:date,budget:budget,snackMode:snackMode,attend:attend,entries:entries,totalSnackInput:totalSnackInput,totalMealInput:totalMealInput,step:step})); } catch(e) {}
+  }, [date,budget,snackMode,attend,entries,totalSnackInput,totalMealInput,step]);
+
+
+  var all = users.concat(staff);
+  var present = all.filter(function(m) { return attend[m.id]; });
+  var pU = present.filter(function(m) { return m.type === "user"; });
+  var pS = present.filter(function(m) { return m.type === "staff"; });
+
+  var eqSnack = present.length ? Math.floor(toNum(totalSnackInput) / present.length) : 0;
+  var sumMD = present.reduce(function(a, m) { return a + getMeal(m.id); }, 0);
+
+  function getSnack(id) {
+    if (snackMode === "equal") return eqSnack;
+    return toNum((entries[id] || {}).snack);
+  }
+  function getMeal(id) { return toNum((entries[id] || {}).meal); }
+  function getSelfPay(id) { return toNum((entries[id] || {}).selfPay); }
+  function getTotal(id) { return getMeal(id) + getSnack(id); }
+  // 施設負担：利用者=全額、職員=合計-自腹
+  function getFacilityCost(id) {
+    var m = all.find(function(x) { return x.id === Number(id); });
+    var total = getTotal(id);
+    if (m && m.type === "staff") {
+      var sp = getSelfPay(id);
+      return sp > 0 ? total - sp : total;
+    }
+    return total;
+  }
+  function getOver(id) {
+    var m = all.find(function(x) { return x.id === Number(id); });
+    if (m && m.type === "staff") return getSelfPay(id);
+    return 0;
+  }
+  function getBasis(id) {
+    var meal = getMeal(id);
+    var snack = getSnack(id);
+    var parts = [];
+    if (meal) parts.push(meal + "円");
+    if (snack) parts.push(snack + "円");
+    return parts.join(" ＋ ");
+  }
+
+  var totalUsed = present.reduce(function(a, m) { return a + getFacilityCost(m.id); }, 0);
+  var selfPayAll = present.reduce(function(a, m) { return a + getOver(m.id); }, 0);
+  var returnAmt = budget - totalUsed;
+
+  function toggle(id) {
+    var next = Object.assign({}, attend);
+    next[id] = !next[id];
+    setAttend(next);
+  }
+  function setAll(list, val) {
+    var next = Object.assign({}, attend);
+    list.forEach(function(m) { next[m.id] = val; });
+    setAttend(next);
+  }
+  function updEntry(id, field, val) {
+    var next = Object.assign({}, entries);
+    next[id] = Object.assign({}, next[id] || {});
+    next[id][field] = val;
+    setEntries(next);
+  }
+  function addUser() {
+    var name = newUserName.trim();
+    if (!name) return;
+    setUsers(function(prev) {
+      var maxId = prev.reduce(function(mx, u) { return Math.max(mx, u.id); }, 0);
+      return prev.concat([{ id: maxId + 1, name: name, type: "user" }]);
+    });
+    setNewUserName("");
+  }
+  function addStaffMember(name) {
+    var trimmed = (name || "").trim();
+    if (!trimmed) return;
+    var newId = Date.now();
+    setStaff(function(prev) {
+      return prev.concat([{ id: newId, name: trimmed, type: "staff" }]);
+    });
+    setAttend(function(prev) {
+      var next = Object.assign({}, prev);
+      next[newId] = true;
+      return next;
+    });
+  }
+
+  var card = { background: "white", borderRadius: 14, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,.08)" };
+  var tt = { fontWeight: 700, fontSize: 14, color: "#374151", marginBottom: 12 };
+  var lb = { fontSize: 11, color: "#6b7280", fontWeight: 600, marginBottom: 4, display: "block" };
+  var fi = { width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "10px 12px", fontSize: 14, outline: "none", fontFamily: "inherit" };
+  var bP = { display: "block", width: "100%", padding: 14, borderRadius: 12, fontSize: 15, fontWeight: 700, border: "none", cursor: "pointer", background: "#0d9488", color: "white", fontFamily: "inherit" };
+  var bS = { display: "block", flex: 1, padding: 14, borderRadius: 12, fontSize: 15, fontWeight: 700, border: "1.5px solid #e2e8f0", cursor: "pointer", background: "white", color: "#6b7280", fontFamily: "inherit" };
+  var numInput = { flex: 1, border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 10px", fontSize: 16, textAlign: "right", outline: "none", fontFamily: "inherit" };
+
+  return (
+    <div style={{ fontFamily: "'Hiragino Kaku Gothic ProN','Meiryo',sans-serif", background: "#f0f4f8", minHeight: "100vh", color: "#1e293b" }}>
+      <style>{printCSS}</style>
+
+      {/* ===== 印刷用 ===== */}
+      <div className="printOnly">
+        <div style={{ textAlign: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 17, fontWeight: "bold", letterSpacing: 1 }}>土曜開所　祝日開所　食事計算表（予算800円）</div>
+          <div style={{ fontSize: 14, marginTop: 8 }}>{toReiwa(date)}</div>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr>
+              <th style={{ border: "1px solid #000", padding: "5px 6px", background: "#f0f0f0", width: "28%", textAlign: "center" }}>氏名</th>
+              <th style={{ border: "1px solid #000", padding: "5px 6px", background: "#f0f0f0", width: "49%", textAlign: "center" }}>計算根拠</th>
+              <th style={{ border: "1px solid #000", padding: "5px 6px", background: "#f0f0f0", width: "23%", textAlign: "center" }}>合計金額</th>
+            </tr>
+            <tr>
+              <td style={{ border: "1px solid #000", padding: "3px 6px", textAlign: "center", fontSize: 9, color: "#666" }}>（例）</td>
+              <td style={{ border: "1px solid #000", padding: "3px 6px", textAlign: "center", fontSize: 9, color: "#666" }}>550円（食事）＋140円（おやつ）</td>
+              <td style={{ border: "1px solid #000", padding: "3px 6px", textAlign: "center", fontSize: 9, color: "#666" }}>690円</td>
+            </tr>
+          </thead>
+          <tbody>
+            {pU.map(function(m) {
+              var t = getTotal(m.id);
+              return (
+                <tr key={m.id}>
+                  <td style={{ border: "1px solid #000", padding: "4px 6px" }}>{m.name}</td>
+                  <td style={{ border: "1px solid #000", padding: "4px 6px", textAlign: "center" }}>{getBasis(m.id)}</td>
+                  <td style={{ border: "1px solid #000", padding: "4px 6px", textAlign: "right" }}>{t > 0 ? t + "円" : ""}</td>
+                </tr>
+              );
+            })}
+            {pS.length > 0 && (
+              <React.Fragment>
+                <tr><td colSpan={3} style={{ border: "1px solid #000", padding: "3px 6px", background: "#f7f7f7", fontSize: 9 }}>（職員）</td></tr>
+                {pS.map(function(m) {
+                  var t = getTotal(m.id);
+                  var sp = getSelfPay(m.id);
+                  var fc = getFacilityCost(m.id);
+                  return (
+                    <tr key={m.id}>
+                      <td style={{ border: "1px solid #000", padding: "4px 6px" }}>（職員）{m.name}S</td>
+                      <td style={{ border: "1px solid #000", padding: "4px 6px", textAlign: "center" }}>{getBasis(m.id)}{sp > 0 ? "（自腹-" + sp + "円）" : ""}</td>
+                      <td style={{ border: "1px solid #000", padding: "4px 6px", textAlign: "right" }}>{fc > 0 ? fc + "円" : ""}</td>
+                    </tr>
+                  );
+                })}
+                <tr><td style={{ border: "1px solid #000", padding: "4px 6px", color: "#aaa" }}>（職員）</td><td style={{ border: "1px solid #000" }}></td><td style={{ border: "1px solid #000" }}></td></tr>
+              </React.Fragment>
+            )}
+          </tbody>
+        </table>
+        <table style={{ width: "55%", borderCollapse: "collapse", marginTop: 14, marginLeft: "auto", fontSize: 11 }}>
+          <tbody>
+            <tr><td style={{ border: "1px solid #000", padding: "4px 8px", fontWeight: "bold" }}>元金</td><td style={{ border: "1px solid #000", padding: "4px 8px", textAlign: "right" }}>{budget.toLocaleString()}円</td></tr>
+            <tr><td style={{ border: "1px solid #000", padding: "4px 8px", fontWeight: "bold" }}>使用合計（施設負担）</td><td style={{ border: "1px solid #000", padding: "4px 8px", textAlign: "right" }}>{totalUsed.toLocaleString()}円</td></tr>
+            {selfPayAll > 0 && <tr><td style={{ border: "1px solid #000", padding: "4px 8px" }}>職員自腹合計</td><td style={{ border: "1px solid #000", padding: "4px 8px", textAlign: "right" }}>{selfPayAll.toLocaleString()}円</td></tr>}
+            <tr><td style={{ border: "1px solid #000", padding: "5px 8px", fontWeight: "bold", background: "#fffde7" }}>経理への返金額</td><td style={{ border: "1px solid #000", padding: "5px 8px", textAlign: "right", fontWeight: "bold", fontSize: 15, background: "#fffde7" }}>{returnAmt.toLocaleString()}円</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ===== 画面UI ===== */}
+      <div className="noPrint">
+        <div style={{ background: "#0f766e", color: "white", padding: "13px 16px", textAlign: "center", fontWeight: 700, fontSize: 16, position: "sticky", top: 0, zIndex: 50 }}>🍱 食事計算表｜糸をかし</div>
+        <div style={{ display: "flex", background: "white", borderBottom: "1px solid #e2e8f0", position: "sticky", top: 46, zIndex: 49 }}>
+          {[["today","📋 計算"],["members","👥 名簿"],["print","🖨 印刷"]].map(function(p) {
+            return (
+              <button key={p[0]} onClick={function(){setTab(p[0]);}} style={{
+                flex: 1, padding: "11px 4px", fontSize: 12, fontWeight: tab === p[0] ? 700 : 500,
+                color: tab === p[0] ? "#0f766e" : "#64748b", background: tab === p[0] ? "#f0fdf4" : "transparent",
+                border: "none", borderBottom: tab === p[0] ? "2.5px solid #0f766e" : "2.5px solid transparent", cursor: "pointer", fontFamily: "inherit",
+              }}>{p[1]}</button>
+            );
+          })}
+        </div>
+
+        <div style={{ padding: "14px 12px", maxWidth: 480, margin: "0 auto", paddingBottom: 48 }}>
+
+          {/* ========== 計算タブ ========== */}
+          {tab === "today" && (
+            <div>
+              {/* ステップバー */}
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}>
+                {["設定","出欠","金額","集計"].map(function(l, i) {
+                  var num = i + 1, done = step > num, active = step === num;
+                  return (
+                    <React.Fragment key={num}>
+                      <div onClick={function(){if(step>=num)setStep(num);}} style={{
+                        width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 11, fontWeight: 700, flexShrink: 0, cursor: step >= num ? "pointer" : "default",
+                        background: done ? "#5eead4" : active ? "#0d9488" : "#e5e7eb", color: done || active ? "white" : "#9ca3af",
+                      }}>{done ? "✓" : num}</div>
+                      {i < 3 && <div style={{ flex: 1, height: 2, background: step > num ? "#5eead4" : "#e5e7eb" }} />}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#94a3b8", marginBottom: 16, padding: "0 4px" }}>
+                <span>設定</span><span>出欠</span><span>金額</span><span>集計</span>
+              </div>
+
+              {/* Step1 */}
+              {step === 1 && (
+                <div>
+                  <div style={card}>
+                    <div style={tt}>① 基本設定</div>
+                    <div style={lb}>📅 日付</div>
+                    <input type="date" value={date} onChange={function(e){setDate(e.target.value);}} style={Object.assign({}, fi, { marginBottom: 14 })} />
+                    <div style={lb}>💴 元金（経理からもらった金額）</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                      {[15000,16000,17000,18000,19000,20000].map(function(v) {
+                        return (
+                          <button key={v} onClick={function(){setBudget(v);}} style={{
+                            padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                            border: "1.5px solid " + (budget === v ? "#0d9488" : "#e2e8f0"),
+                            background: budget === v ? "#0d9488" : "white", color: budget === v ? "white" : "#6b7280",
+                          }}>{v.toLocaleString()}円</button>
+                        );
+                      })}
+                    </div>
+                    <input type="number" value={budget} onChange={function(e){setBudget(toNum(e.target.value));}} style={Object.assign({}, fi, { marginBottom: 14 })} placeholder="上記以外はここに入力" />
+                    <div style={lb}>🍩 おやつの計算方法</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {[["equal","均等割り","合計額→人数で割る"],["individual","個別入力","1人ずつ入力"]].map(function(p) {
+                        return (
+                          <button key={p[0]} onClick={function(){setSnackMode(p[0]);}} style={{
+                            flex: 1, padding: "12px 8px", borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "center", fontFamily: "inherit", lineHeight: 1.4,
+                            border: "2px solid " + (snackMode === p[0] ? "#0d9488" : "#e2e8f0"),
+                            background: snackMode === p[0] ? "#f0fdfa" : "white", color: snackMode === p[0] ? "#0f766e" : "#6b7280",
+                          }}>{p[1]}<br/><span style={{ fontSize: 10, opacity: 0.7 }}>{p[2]}</span></button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <button style={bP} onClick={function(){setStep(2);}}>次へ：出欠確認 →</button>
+                </div>
+              )}
+
+              {/* Step2: 出欠 */}
+              {step === 2 && (
+                <div>
+                  {/* 利用者 */}
+                  <div style={card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={Object.assign({}, tt, { margin: 0, color: "#2563eb" })}>🙋 利用者（出席：{pU.length}名）</div>
+                      <div>
+                        <button onClick={function(){setAll(users,true);}} style={{ fontSize: 11, color: "#2563eb", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", marginRight: 8, fontFamily: "inherit" }}>全選択</button>
+                        <button onClick={function(){setAll(users,false);}} style={{ fontSize: 11, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>クリア</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                      {users.map(function(m) {
+                        var on = !!attend[m.id];
+                        return (
+                          <button key={m.id} onClick={function(){toggle(m.id);}} style={{
+                            padding: "10px 8px", borderRadius: 10, fontSize: 12, fontWeight: on ? 700 : 400, fontFamily: "inherit",
+                            border: "1.5px solid " + (on ? "#2563eb" : "#e2e8f0"), background: on ? "#eff6ff" : "white",
+                            color: on ? "#2563eb" : "#6b7280", cursor: "pointer", textAlign: "left",
+                          }}>{on ? "✓ " : "　"}{m.name}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 職員 */}
+                  <div style={card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={Object.assign({}, tt, { margin: 0, color: "#ea580c" })}>👔 職員（出席：{pS.length}名）</div>
+                      <div>
+                        <button onClick={function(){setAll(staff,true);}} style={{ fontSize: 11, color: "#ea580c", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", marginRight: 8, fontFamily: "inherit" }}>全選択</button>
+                        <button onClick={function(){setAll(staff,false);}} style={{ fontSize: 11, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>クリア</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+                      {staff.map(function(m) {
+                        var on = !!attend[m.id];
+                        return (
+                          <button key={m.id} onClick={function(){toggle(m.id);}} style={{
+                            padding: "10px 8px", borderRadius: 10, fontSize: 12, fontWeight: on ? 700 : 400, fontFamily: "inherit",
+                            border: "1.5px solid " + (on ? "#ea580c" : "#e2e8f0"), background: on ? "#fff7ed" : "white",
+                            color: on ? "#ea580c" : "#6b7280", cursor: "pointer", textAlign: "left",
+                          }}>{on ? "✓ " : "　"}{m.name}</button>
+                        );
+                      })}
+                    </div>
+                    {/* 職員クイック追加 */}
+                    <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 10 }}>
+                      <div style={{ fontSize: 11, color: "#ea580c", fontWeight: 600, marginBottom: 4 }}>＋ 職員を追加</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input value={quickStaffName} onChange={function(e){setQuickStaffName(e.target.value);}}
+                          style={Object.assign({}, fi, { flex: 1, fontSize: 13 })} placeholder="名前を入力→追加ボタン" />
+                        <button onClick={function(){addStaffMember(quickStaffName);setQuickStaffName("");}}
+                          style={{ padding: "10px 14px", background: "#ea580c", color: "white", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, fontFamily: "inherit" }}>追加</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={bS} onClick={function(){setStep(1);}}>← 戻る</button>
+                    <button style={Object.assign({}, bP, { flex: 2, opacity: present.length === 0 ? 0.4 : 1 })}
+                      disabled={present.length === 0} onClick={function(){setStep(3);}}>次へ：金額入力（{present.length}名）→</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step3: 金額入力 */}
+              {step === 3 && (
+                <div>
+                  {/* おやつに回せる金額 */}
+                  <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+                    <div style={{ fontWeight: 700, color: "#065f46", fontSize: 13, marginBottom: 10 }}>💴 おやつに回せる金額</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#064e3b", padding: "2px 0", marginBottom: 6 }}>
+                      <span>予算（800円 × {present.length}名）</span><span style={{ fontWeight: 700 }}>{(800 * present.length).toLocaleString()}円</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <span style={{ fontSize: 13, color: "#064e3b", flexShrink: 0 }}>食事代合計</span>
+                      <input type="number" inputMode="numeric" value={totalMealInput} placeholder="食事代の合計を入力"
+                        onChange={function(e){setTotalMealInput(e.target.value);}}
+                        style={{ flex: 1, border: "1.5px solid #6ee7b7", borderRadius: 10, padding: "10px 12px", fontSize: 16, textAlign: "right", outline: "none", fontFamily: "inherit", background: "white" }} />
+                      <span style={{ fontSize: 14, color: "#064e3b" }}>円</span>
+                    </div>
+                    <div style={{ borderTop: "1px solid #6ee7b7", margin: "6px 0" }} />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 16, color: "#065f46", fontWeight: 700 }}>
+                      <span>おやつに回せる金額</span>
+                      <span style={{ fontSize: 20 }}>{toNum(totalMealInput) > 0 ? Math.max(0, 800 * present.length - toNum(totalMealInput)).toLocaleString() + "円" : "—"}</span>
+                    </div>
+                  </div>
+
+                  {snackMode === "equal" && (
+                    <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+                      <div style={{ fontWeight: 700, color: "#92400e", fontSize: 13, marginBottom: 8 }}>🍩 おやつ合計金額を入力</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ fontSize: 12, color: "#78350f", flexShrink: 0 }}>合計</span>
+                        <input type="number" inputMode="numeric" value={totalSnackInput} placeholder="例：2000"
+                          onChange={function(e){setTotalSnackInput(e.target.value);}}
+                          style={{ flex: 1, border: "1.5px solid #fbbf24", borderRadius: 10, padding: "10px 12px", fontSize: 16, textAlign: "right", outline: "none", fontFamily: "inherit", background: "white" }} />
+                        <span style={{ fontSize: 14, color: "#78350f" }}>円</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#78350f", background: "#fef3c7", borderRadius: 8, padding: "8px 10px" }}>
+                        {toNum(totalSnackInput) > 0 ? (
+                          <span>{toNum(totalSnackInput).toLocaleString()}円 ÷ {present.length}人 ＝ <strong>1人 {eqSnack}円</strong></span>
+                        ) : (
+                          <span>金額を入力すると自動で人数割りされます</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 利用者 */}
+                  {pU.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#2563eb", marginBottom: 6 }}>🙋 利用者</div>
+                      {pU.map(function(m) {
+                        var e = entries[m.id] || {};
+                        var tot = getTotal(m.id);
+                        return (
+                          <div key={m.id} style={{ background: "white", borderRadius: 14, padding: 14, marginBottom: 10, boxShadow: "0 1px 3px rgba(0,0,0,.05)", borderLeft: "4px solid #2563eb" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                              <span style={{ fontWeight: 700, fontSize: 14 }}>{m.name}</span>
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontSize: 20, fontWeight: 700, color: "#0d9488" }}>{tot > 0 ? tot + "円" : "—"}</div>
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #f3f4f6" }}>
+                              <span style={{ fontSize: 12, color: "#6b7280", width: 64 }}>🍱 食事代</span>
+                              <input type="number" inputMode="numeric" value={e.meal || ""} placeholder="0" onChange={function(ev){updEntry(m.id,"meal",ev.target.value);}} style={numInput} />
+                              <span style={{ fontSize: 13, color: "#9ca3af" }}>円</span>
+                            </div>
+                            {snackMode === "individual" && (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0" }}>
+                                <span style={{ fontSize: 12, color: "#6b7280", width: 64 }}>🍩 おやつ</span>
+                                <input type="number" inputMode="numeric" value={e.snack || ""} placeholder="0" onChange={function(ev){updEntry(m.id,"snack",ev.target.value);}} style={numInput} />
+                                <span style={{ fontSize: 13, color: "#9ca3af" }}>円</span>
+                              </div>
+                            )}
+                            {snackMode === "equal" && eqSnack > 0 && (
+                              <div style={{ display: "flex", alignItems: "center", padding: "8px 10px", background: "#fffbeb", borderRadius: 8, marginTop: 6 }}>
+                                <span style={{ fontSize: 12, color: "#92400e", width: 64 }}>🍩 おやつ</span>
+                                <span style={{ flex: 1, textAlign: "right", fontSize: 15, color: "#b45309", fontWeight: 700 }}>{eqSnack}円（均等割）</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 職員 */}
+                  {pS.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#ea580c", marginBottom: 6, marginTop: 8 }}>👔 職員</div>
+                      {pS.map(function(m) {
+                        var e = entries[m.id] || {};
+                        var tot = getTotal(m.id);
+                        var sp = getSelfPay(m.id);
+                        var facilCost = getFacilityCost(m.id);
+                        return (
+                          <div key={m.id} style={{ background: "white", borderRadius: 14, padding: 14, marginBottom: 10, boxShadow: "0 1px 3px rgba(0,0,0,.05)", borderLeft: "4px solid #ea580c" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                              <span style={{ fontWeight: 700, fontSize: 14 }}>{m.name}<span style={{ fontSize: 11, color: "#ea580c" }}>S</span></span>
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontSize: 20, fontWeight: 700, color: "#0d9488" }}>{tot > 0 ? tot + "円" : "—"}</div>
+                                {sp > 0 && <div style={{ fontSize: 10, color: "#ea580c" }}>自腹 {sp}円 → 施設負担 {facilCost}円</div>}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #f3f4f6" }}>
+                              <span style={{ fontSize: 12, color: "#6b7280", width: 64 }}>🍱 食事代</span>
+                              <input type="number" inputMode="numeric" value={e.meal || ""} placeholder="0" onChange={function(ev){updEntry(m.id,"meal",ev.target.value);}} style={numInput} />
+                              <span style={{ fontSize: 13, color: "#9ca3af" }}>円</span>
+                            </div>
+                            {snackMode === "individual" && (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #f3f4f6" }}>
+                                <span style={{ fontSize: 12, color: "#6b7280", width: 64 }}>🍩 おやつ</span>
+                                <input type="number" inputMode="numeric" value={e.snack || ""} placeholder="0" onChange={function(ev){updEntry(m.id,"snack",ev.target.value);}} style={numInput} />
+                                <span style={{ fontSize: 13, color: "#9ca3af" }}>円</span>
+                              </div>
+                            )}
+                            {snackMode === "equal" && eqSnack > 0 && (
+                              <div style={{ display: "flex", alignItems: "center", padding: "8px 10px", background: "#fffbeb", borderRadius: 8, marginTop: 6, marginBottom: 6 }}>
+                                <span style={{ fontSize: 12, color: "#92400e", width: 64 }}>🍩 おやつ</span>
+                                <span style={{ flex: 1, textAlign: "right", fontSize: 15, color: "#b45309", fontWeight: 700 }}>{eqSnack}円（均等割）</span>
+                              </div>
+                            )}
+                            {/* 自腹入力 */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderTop: "1px dashed #fed7aa", marginTop: 4 }}>
+                              <span style={{ fontSize: 12, color: "#ea580c", width: 64, fontWeight: 600 }}>💰 自腹</span>
+                              <input type="number" inputMode="numeric" value={e.selfPay || ""} placeholder="0"
+                                onChange={function(ev){updEntry(m.id,"selfPay",ev.target.value);}}
+                                style={Object.assign({}, numInput, { borderColor: "#fed7aa" })} />
+                              <span style={{ fontSize: 13, color: "#ea580c" }}>円</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={bS} onClick={function(){setStep(2);}}>← 戻る</button>
+                    <button style={Object.assign({}, bP, { flex: 2 })} onClick={function(){setStep(4);}}>次へ：集計 →</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step4: 集計 */}
+              {step === 4 && (
+                <div>
+                  <div style={{ background: "linear-gradient(135deg,#0f766e,#115e59)", color: "white", borderRadius: 16, padding: 18, marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💰 集計結果</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 13 }}><span>元金</span><span>{budget.toLocaleString()}円</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 13 }}><span>施設負担 使用額</span><span>{totalUsed.toLocaleString()}円</span></div>
+                    {selfPayAll > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 11, color: "#fca5a5" }}><span>職員自腹合計</span><span>{selfPayAll.toLocaleString()}円</span></div>}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 11, opacity: .7 }}><span>出席（利用者{pU.length}・職員{pS.length}）</span><span>{present.length}名</span></div>
+                    <div style={{ borderTop: "1px solid rgba(255,255,255,.25)", margin: "10px 0" }} />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: 700, fontSize: 15 }}>経理への返金額</span>
+                      <span style={{ fontSize: 26, fontWeight: 800, color: "#fef08a" }}>{returnAmt.toLocaleString()}円</span>
+                    </div>
+                  </div>
+
+                  {present.filter(function(m){return getOver(m.id)>0;}).length > 0 && (
+                    <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                      <div style={{ fontWeight: 700, color: "#dc2626", fontSize: 12, marginBottom: 6 }}>⚠ 自己負担あり</div>
+                      {present.filter(function(m){return getOver(m.id)>0;}).map(function(m) {
+                        var isStaff = m.type === "staff";
+                        return <div key={m.id} style={{ fontSize: 13, color: "#991b1b" }}>{m.name}{isStaff ? "S" : ""}：自腹 <strong>{getOver(m.id)}円</strong></div>;
+                      })}
+                    </div>
+                  )}
+
+                  <div style={card}>
+                    <div style={tt}>📋 明細一覧</div>
+                    <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1.5px solid #e5e7eb" }}>
+                          <th style={{ textAlign: "left", padding: "4px 2px", color: "#6b7280", fontSize: 10 }}>氏名</th>
+                          <th style={{ textAlign: "center", padding: "4px 2px", color: "#6b7280", fontSize: 10 }}>計算根拠</th>
+                          <th style={{ textAlign: "right", padding: "4px 2px", color: "#6b7280", fontSize: 10 }}>合計</th>
+                          <th style={{ textAlign: "right", padding: "4px 2px", color: "#6b7280", fontSize: 10 }}>施設負担</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {present.map(function(m) {
+                          var t = getTotal(m.id);
+                          var fc = getFacilityCost(m.id);
+                          var sp = getOver(m.id);
+                          var isStaff = m.type === "staff";
+                          return (
+                            <tr key={m.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                              <td style={{ padding: "5px 2px", color: isStaff ? "#c2410c" : "#374151", fontWeight: isStaff ? 600 : 400 }}>{m.name}{isStaff ? "S" : ""}</td>
+                              <td style={{ padding: "5px 2px", textAlign: "center", color: "#6b7280", fontSize: 10 }}>{getBasis(m.id) || "—"}</td>
+                              <td style={{ padding: "5px 2px", textAlign: "right" }}>{t > 0 ? t + "円" : "—"}</td>
+                              <td style={{ padding: "5px 2px", textAlign: "right", color: sp > 0 ? "#ea580c" : "#374151" }}>{fc > 0 ? fc + "円" : "—"}{sp > 0 ? " (自腹" + sp + ")" : ""}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={bS} onClick={function(){setStep(3);}}>← 戻る</button>
+                    <button style={Object.assign({}, bP, { flex: 2, background: "#1d4ed8" })} onClick={function(){setTab("print");}}>🖨 印刷画面へ</button>
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 20 }}>
+                    <button onClick={function(){setAttend({});setEntries({});setTotalSnackInput("");setTotalMealInput("");setStep(1);}}
+                      style={{ fontSize: 12, color: "#94a3b8", background: "none", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit" }}>
+                      🔄 新しい計算を始める
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========== 名簿タブ ========== */}
+          {tab === "members" && (
+            <div>
+              <div style={card}>
+                <div style={Object.assign({}, tt, { color: "#2563eb" })}>🙋 利用者リスト（{users.length}名）</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                  <input value={newUserName} onChange={function(e){setNewUserName(e.target.value);}}
+                    style={Object.assign({}, fi, { flex: 1 })} placeholder="名前を入力 → 追加ボタン" />
+                  <button onClick={addUser} style={{ padding: "10px 16px", background: "#2563eb", color: "white", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, fontFamily: "inherit" }}>追加</button>
+                </div>
+                {users.map(function(m, i) {
+                  return (
+                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < users.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+                      <span style={{ fontSize: 13 }}>{m.name}</span>
+                      <button onClick={function(){var delId=m.id;setUsers(function(prev){return prev.filter(function(u){return u.id!==delId;});});}}
+                        style={{ fontSize: 11, color: "#ef4444", background: "none", border: "1px solid #fca5a5", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>削除</button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={card}>
+                <div style={Object.assign({}, tt, { color: "#ea580c" })}>👔 職員リスト（{staff.length}名）</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                  <input value={newStaffName} onChange={function(e){setNewStaffName(e.target.value);}}
+                    style={Object.assign({}, fi, { flex: 1 })} placeholder="名前を入力 → 追加ボタン" />
+                  <button onClick={function(){addStaffMember(newStaffName);setNewStaffName("");}} style={{ padding: "10px 16px", background: "#ea580c", color: "white", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, fontFamily: "inherit" }}>追加</button>
+                </div>
+                {staff.map(function(m, i) {
+                  return (
+                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < staff.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+                      <span style={{ fontSize: 13 }}>{m.name}</span>
+                      <button onClick={function(){var delId=m.id;setStaff(function(prev){return prev.filter(function(s){return s.id!==delId;});});}}
+                        style={{ fontSize: 11, color: "#ef4444", background: "none", border: "1px solid #fca5a5", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>削除</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ========== 印刷タブ ========== */}
+          {tab === "print" && (
+            <div>
+              {present.length === 0 ? (
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 12, fontSize: 12, color: "#92400e" }}>⚠ 出席者が未選択です。「📋 計算」タブから入力してください。</div>
+              ) : (
+                <div>
+                  <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: 12, marginBottom: 12, fontSize: 12, color: "#1d4ed8", lineHeight: 1.8 }}>
+                    <strong>📄 印刷方法</strong><br/>① 「印刷する」ボタンをタップ<br/>② 用紙サイズ→A4、向き→縦<br/>③ 「印刷」or「PDFとして保存」
+                  </div>
+                  <button onClick={function(){window.print();}} style={Object.assign({}, bP, { background: "#1d4ed8", fontSize: 16, marginBottom: 16 })}>🖨 印刷する（A4縦）</button>
+                  <div style={Object.assign({}, card, { padding: 0, overflow: "hidden" })}>
+                    <div style={{ background: "#f8fafc", padding: "8px 16px", fontSize: 11, color: "#94a3b8", borderBottom: "1px solid #e2e8f0", textAlign: "center" }}>↓ 印刷プレビュー</div>
+                    <div style={{ padding: 14 }}>
+                      <div style={{ textAlign: "center", marginBottom: 10 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>土曜開所　祝日開所　食事計算表（予算800円）</div>
+                        <div style={{ fontSize: 11, marginTop: 4 }}>{toReiwa(date)}</div>
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ border: "1px solid #999", padding: 3, background: "#f0f0f0" }}>氏名</th>
+                            <th style={{ border: "1px solid #999", padding: 3, background: "#f0f0f0" }}>計算根拠</th>
+                            <th style={{ border: "1px solid #999", padding: 3, background: "#f0f0f0" }}>合計金額</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pU.map(function(m) {
+                            return (
+                              <tr key={m.id}>
+                                <td style={{ border: "1px solid #999", padding: 3 }}>{m.name}</td>
+                                <td style={{ border: "1px solid #999", padding: 3, textAlign: "center" }}>{getBasis(m.id)}</td>
+                                <td style={{ border: "1px solid #999", padding: 3, textAlign: "right" }}>{getTotal(m.id) > 0 ? getTotal(m.id) + "円" : ""}</td>
+                              </tr>
+                            );
+                          })}
+                          {pS.length > 0 && pS.map(function(m) {
+                            var sp = getSelfPay(m.id);
+                            var fc = getFacilityCost(m.id);
+                            return (
+                              <tr key={m.id}>
+                                <td style={{ border: "1px solid #999", padding: 3 }}>（職員）{m.name}S</td>
+                                <td style={{ border: "1px solid #999", padding: 3, textAlign: "center" }}>{getBasis(m.id)}{sp > 0 ? "（自腹-" + sp + "円）" : ""}</td>
+                                <td style={{ border: "1px solid #999", padding: 3, textAlign: "right" }}>{fc > 0 ? fc + "円" : ""}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <div style={{ marginTop: 8, textAlign: "right", fontSize: 10 }}>
+                        <div>元金：{budget.toLocaleString()}円 ／ 使用（施設負担）：{totalUsed.toLocaleString()}円</div>
+                        {selfPayAll > 0 && <div style={{ color: "#ea580c" }}>職員自腹合計：{selfPayAll.toLocaleString()}円</div>}
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#0f766e" }}>返金額：{returnAmt.toLocaleString()}円</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+var printCSS = "\n  .printOnly { display: none; }\n  .noPrint {}\n  @media print {\n    .noPrint { display: none !important; }\n    .printOnly { display: block !important; padding: 0; margin: 0; }\n    body { background: white !important; font-size: 10pt; }\n    @page { size: A4 portrait; margin: 15mm 12mm; }\n  }\n";
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
